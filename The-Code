@@ -1,0 +1,404 @@
+#include <Servo.h> //includes servo class
+#define joyY1 A0 //thse lines tell where
+#define joyX1 A1 //the joysticks are
+#define joyY2 A2 //attached so that
+#define joyX2 A3 //the program
+#define joyY3 A4 //can receive input 
+#define joyX3 A5 //data from them
+static int zero[6] = {97,98,98,86,95,82}; //this is where all
+//the servo arms are perfectly horizontal (zero[])
+//arr[] is for storing requested position for the platform 
+// arr[] array is {x,y,z,rot(x),rot(y),rot(z)} 
+static double arr[6] = {0.0,0.0,0.0,radians(0.0),radians(0.0),radians(0.0)}; 
+//theta_a[] is for actual degree of rotation of all servos 
+//in theta_a[] all servos start at 0 for easier calculations 
+static double theta_a[6] = {0.0,0.0,0.0,0.0,0.0,0.0}; 
+static int servo_pos[6]; //array of current servo positions
+const double servo_min = -90; //maximum servo positions 
+const double servo_max = 90; // with 0 being horizontal 
+const double L1 = .0245; //used for calculations, 
+//L1 is the effective servo arm length 
+const double L2 = 0.16250; //used for calculations,
+//L2 is the length of base and platform connecting arm 
+const double z_home = 0.1525; //used for calculations,
+// z_home is the height of the platform above the base 
+// for z_home, the 0-line is the height of the servo arms     
+//p[][] contains the x, y values for servo rotation points 
+const double p[2][6] = { 
+  { -.09,-.06,.06,.09,.035,-.035},
+  {-.015,-.075,-.075,-.015,.085,.085}};
+//re[][] contains the x y z values for platform attachment point positions 
+const double re[3][6] = { 
+  { 
+    -.0875, -.0525, .0525, .0875, .035, -.035
+  },{
+    -.0125, -.0725, -.0725, .0125, .08, .08
+  },{ 
+    0,0,0,0,0,0, 
+  } };
+//arrays below are used for servo rotation calculation 
+static double M[3][3], rxp [3][6], T[3],H[3] = {0,0,z_home}; 
+//H[] is center position of platform with respect to base 
+Servo servo[6]; //makes array for servos
+void setup(){
+servo[0].attach(13); //these lines of code
+servo[1].attach(8); //show which pins that the servos
+servo[2].attach(9); //are attached onto the arduino
+servo[3].attach(10); //(so that signals can be sent
+servo[4].attach(11); // to the correct pin)
+servo[5].attach(12); 
+}
+//getAlpha = function calculating needed servo rotation value 
+double getAlpha(int i){
+  int n =0; //counting variable 
+  double th=0;//angle 
+  double q[3],d1[3],d12;//all 3 will be used to calculate 
+  double min = servo_min;//set min and max values to 
+  double max = servo_max;//use in calculating values 
+  while (n<100){ 
+//next section:calculation of position of base attachment point 
+//base attachment point is on servo arm where leg is connected 
+//trigonometry used to determine where points would be based on
+//a potential servo rotation, then checked if those points would
+//even work well together
+    if (i==4 || i==5){ //servos done separately- easier calculations
+      if (i==4){q[0]=p[0][4] - L1*cos(radians(th));}
+      else{q[0] = re[0][5] + L1*cos(radians(th));}
+      q[1]=re[1][i]; //y values for these servos are not different from normal
+    }
+    else if (i==3 || i==2){
+      q[0] = re[0][i] - sin(radians(30))*L1*cos(radians(th));
+      q[1] = re[1][i] - cos(radians(30))*L1*cos(radians(th));
+    }
+    else if (i==1 || i==0){
+      q[0] = re[0][i] + sin(radians(30))*L1*cos(radians(th));
+      q[1] = re[1][i] + cos(radians(30))*L1*cos(radians(th));
+    }
+    else{
+      //nothing should fall under this section
+    }
+    q[2] = L1*sin(radians(th)); //are calculated with q[] here 
+//next section:calculation of distance between platform and 
+//base attachment points 
+    d1[0] = rxp[0][i]-q[0]; 
+    d1[1] = rxp[1][i]-q[1]; 
+    d1[2] = rxp[2][i]-q[2]; 
+    d12 = sqrt(d1[0]*d1[0] + d1[1]*d1[1] + d1[2]*d1[2]); 
+//d12 is calculated distance between base and platform points 
+//if d12 is the same as L2 (base&platform connecting arm length) 
+    if (abs(d12-L2)<0.0001){ 
+      return th; //th is the angle of the servo arm 
+    } 
+//if the distance is not the same as the leg length... 
+    if (d12<L2){ //split the space to search in half 
+      max = th; 
+    } 
+    else{ 
+      min = th; 
+    } 
+    n+=1; //increase counting variable 
+    th =min+(max-min)/2; //new angle to try
+  } 
+  return th; //after it has looped enough returns the angle
+} 
+//function calculating rotation matrix 
+void getmatrix(double pe[]) //pe[] is matrix of desired position
+//pe[] has [x,y,z,rot(x),rot(y),rot(z)]
+{ 
+  double psi = radians(pe[5]); //rot(z) value
+  double theta = radians(pe[4]); //rot(y) value
+  double phi = radians(pe[3]); //rot(x) value
+  //M[][] (created earlier) is for calculating rotation values
+  //the M[][] values line up with the general rotation matrice
+  M[0][0] = cos(psi)*cos(theta); 
+  M[1][0] = -sin(psi)*cos(phi)+cos(psi)*sin(theta)*sin(phi); 
+  M[2][0] = sin(psi)*sin(phi)+cos(psi)*cos(phi)*sin(theta); 
+  M[0][1] = sin(psi)*cos(theta); 
+  M[1][1] = cos(psi)*cos(phi)+sin(psi)*sin(theta)*sin(phi); 
+  M[2][1] = cos(theta)*sin(phi); 
+  M[0][2] = -sin(theta); 
+  M[1][2] = -cos(psi)*sin(phi)+sin(psi)*sin(theta)*cos(phi); 
+  M[2][2] = cos(theta)*cos(phi); 
+  //at the end of the call of getmatrix, M[][] has been set up with
+  //(last note cont) the correct values for the desired rotations
+} 
+//getrxp calculates desired position of platform attachment points
+//getrxp uses desired xyz values and M[][] as predetermined^
+void getrxp(double pe[]) //remember pe is matrice of desired values
+{//rxp was already created for this purpose (a [3][6] matrix)
+   for(int i=0;i<6;i++){//loops for each attachment point
+      rxp[0][i] = T[0]+M[0][0]*(re[0][i])+M[0][1]*(re[1][i])+M[0][2]*(re[2][i]);
+      //rxp[0][i] is for x value of i, using desired x value+ rotation matrix times
+      //(last note cont) initial platform attachment points
+      rxp[1][i] = T[1]+M[1][0]*(re[0][i])+M[1][1]*(re[1][i])+M[1][2]*(re[2][i]);
+      //rxp[1][i] is the same as rxp[0][i] for y values
+      rxp[2][i] = T[2]+M[2][0]*(re[0][i])+M[2][1]*(re[1][i])+M[2][2]*(re[2][i]);
+      //and rxp[2][i] is the same as rxp[0][i] but for z values
+   }
+   //at the end of getrxp, rxp has desired platform point values
+}
+//getT calculates translation vector from desired move vector +
+//(getT note cont) home translation vector, used in getrxp later
+void getT(double pe[])
+{
+   T[0] = pe[0]+H[0];
+   T[1] = pe[1]+H[1];
+   T[2] = pe[2]+H[2];
+}
+//setPos sets the position of the servos based on desired pe[]
+//reminder pe[] is [x,y,z, rot(x), rot(y), rot(z)]
+void setPos(double pe[]){
+    for(int i = 0; i < 6; i++) //for each servo
+    {
+//getT &getmatrix &get rxp int total- values platform attachment xyz
+        getT(pe);
+        getmatrix(pe);
+        getrxp(pe);
+    for (int i = 0; i<6; i++){
+        theta_a[i]=getAlpha(i); //servo rotation value for i servo
+        //the next lines of code are calibrating because every servo is different
+        //this calibration is done dependent on desired motion because
+        //the difference does not appear to be linear
+        //calculations done with scalars dependent on the desired position
+        //for as smooth of movement as possible
+        if (pe[0]<-.005){ //-x movement
+          if (i==5){
+            theta_a[i] += (600*-pe[0]);
+          }
+          else if (i==2){
+            theta_a[i]+= (900*-pe[0]);
+          }
+          else if (i==4){
+            theta_a[i] -= (750*-pe[0]);
+          }
+          else if (i==1){
+            theta_a[i] -= (100*-pe[0]);          }
+        }
+        else if (pe[0] >.005){ //+x movement
+          if (i==4){
+            theta_a[i] += (550*pe[0]);
+          }
+          else if (i==1){
+            theta_a[i]+= (900*pe[0]);
+          }
+          else if (i==5){
+            theta_a[i] -= (550*pe[0]);
+          }
+          else if (i==2){
+            theta_a[i] -= (200*pe[0]); 
+          }
+        }
+        if (pe[1]<-.005){//-y movement
+          if (i==4 || i==5){
+            theta_a[i] += (900*-pe[1]);
+          }
+          else if (i==2){
+            theta_a[i] +=(800*-pe[1]);
+          }
+          else if (i==1){
+            theta_a[i] +=(700*-pe[1]);
+          }
+          else if (i==0){
+            theta_a[i] -= (400*-pe[1]);
+          }
+          else if (i==3){
+            theta_a[i] -=(200*-pe[1]);
+          }
+        }
+        else if (pe[1]>.005){//+y movement
+          if (i==4|| i==5){
+            theta_a[i] -= (900*pe[1]);
+          }
+          else if (i==3){
+            theta_a[i] += (550*pe[1]);
+          }
+          else if (i==0){
+            theta_a[i] += (800*pe[1]);
+          }
+          else if (i==1){
+            theta_a[i] +=(800*pe[1]);
+          }
+        }
+        if (i%2 == 0){//adjusts for servos being mounted opposite
+          theta_a[i] = zero[i] + theta_a[i];
+        }
+        else{
+          theta_a[i] = zero[i] - theta_a[i];
+        }
+        if (pe[5]<0){//counterclockwise
+          if (i==0){
+            theta_a[i]-=(70*-pe[5]/35);
+          }
+          else if (i==1){
+            theta_a[i]-=(50*-pe[5]/35);
+          }
+          else if (i==2){
+            theta_a[i]-=(70*-pe[5]/35);
+          }
+          else if (i==3){
+            theta_a[i]-=(25*-pe[5]/35);
+          }
+          else if (i==4){
+            theta_a[i]-=(40*-pe[5]/35);
+          }
+          else if (i==5){
+            theta_a[i]-=(15*-pe[5]/35);
+          }
+        }
+        else if (pe[5]>0){ //clockwise
+          if (i==0){
+           theta_a[i]+=(20*pe[5]/35);
+          }
+          else if (i==1){
+            theta_a[i]+=(60*pe[5]/35);
+          }
+          else if (i==2){
+            theta_a[i]+=(60*pe[5]/35);
+          }
+          else if (i==3){
+            theta_a[i]+=(50*pe[5]/35);
+          }
+          else if (i==4){
+            theta_a[i]+=(40*pe[5]/35);
+          }
+          else if (i==5){
+            theta_a[i]+=(60*pe[5]/35);
+          }
+        }
+        if (pe[3] > 0){//+x rotation
+          if (i==0){
+            theta_a[i]+=(50*pe[3]/17);
+          }
+          else if (i==3){
+            theta_a[i]-=(50*pe[3]/17);
+          }
+          else if (i==4){
+            theta_a[i]+=(90*pe[3]/17);
+          }
+          else if (i==5){
+            theta_a[i]-=(90*pe[3]/17);
+          }
+        }
+        else if (pe[3] < 0){//-x rotation
+          if (i==3){
+            theta_a[i]+=(10*pe[3]/17);
+          }
+            if (i==1){
+            theta_a[i]+=(75*pe[3]/17);
+          }
+          else if (i==2){
+            theta_a[i]-=(80*pe[3]/17);
+          }
+        }
+        if (pe[4] >0){//+y rotation
+          if (i==2){
+            theta_a[i] += (10*pe[4]/17);
+          }
+          else if (i==3){
+            theta_a[i] -= (50*pe[4]/17);
+          }
+          else if (i==4)
+            theta_a[i] += (30*pe[4]/17);
+          }
+        else if (pe[4] <0){//-y rotation
+          if (i==0){
+            theta_a[i] -= (40*pe[4]/17);
+          }
+          else if (i==1){
+            theta_a[i] += (10*pe[4]/17);
+          }
+          else if (i==2){
+            theta_a[i] -= (20*pe[4]/17);
+          }
+          else if (i==3){
+            theta_a[i] += (0*pe[4]/17);
+          }
+          else if (i==4){
+            theta_a[i] += (0*pe[4]/17);
+          }
+          else if (i==5){
+            theta_a[i] += (30*pe[4]/17);
+          }
+        }
+        servo[i].write(theta_a[i]); //actually sets position
+}
+   }
+}
+void loop(){ //this loop runs FOREVER
+  double yValue1 = analogRead(joyY1); //reading joystick values
+  double xValue1 = analogRead(joyX1);
+  double yValue2 = analogRead(joyY2);
+  double xValue2 = analogRead(joyX2);
+  double yValue3 = analogRead(joyY3);
+  double xValue3 = analogRead(joyX3);
+  double desiredHeight;
+  //next lines calculate desired height based on joystick
+  if (yValue2 == 525 || yValue2 == 524){
+    desiredHeight=0;
+  }
+  else if (yValue2 <525){
+    desiredHeight = (yValue2 - 525)*(.0175/525);
+  }
+  else{
+    desiredHeight = (yValue2 - 525)*(.0375/497);
+  }
+  double desiredYValue;
+  //next lines calculate desired y value based on joystick
+  if (yValue1 == 508 || yValue1 ==509){
+    desiredYValue =0;
+  }
+  else if (yValue1 <508){
+    desiredYValue = (yValue1 - 508)*(-.05/508);
+  }
+  else{
+    desiredYValue = (yValue1 - 508)*(-.05/514);
+  }
+  double desiredXValue;
+  //next lines calculate desired x value based on joystick
+  if (xValue1 == 499 || xValue1 == 500){
+    desiredXValue = 0;
+  }
+  else if (xValue1 > 500){
+    desiredXValue = (xValue1 - 500)*(.05/523);
+  }
+  else{
+    desiredXValue = (xValue1 - 500)*(.05/500);
+  }
+  double desiredZRot;
+  //next lines calculate desired z rotation based on joystick
+  if (xValue2 == 526 || xValue2 == 527){
+    desiredZRot = 0;
+  }
+  else if (xValue2 < 527){
+    desiredZRot = (xValue2 - 527)*(35.0/520);
+  }
+  else if (xValue2 > 527){
+    desiredZRot = (xValue2 -527)*(35.0/495);
+  }
+  double desiredXRot;
+  //next lines calculate desired x rotation based on joystick
+  if (yValue3 == 509){
+    desiredXRot = 0;
+  }
+  else if (yValue3 < 509){
+    desiredXRot = (yValue3-509)*(17.0/507);
+  }
+  else if (yValue3 > 509){
+    desiredXRot = (yValue3-509)*(17.0/513);
+  }
+  double desiredYRot;
+  //next lines calculate desired y rotation based on joystick
+  if (xValue3 == 511 || xValue3 == 512){
+    desiredYRot = 0;
+  }
+  else if (xValue3 < 511){
+    desiredYRot = (xValue3 - 511)*(-17.0/510);
+  }
+  else if (xValue3 > 511){
+    desiredYRot = (xValue3 - 511)*(-17.0/511);
+  }
+  double desiredPosition[6] = {-desiredXValue, desiredYValue,desiredHeight,-desiredXRot,desiredYRot,desiredZRot};
+  //position determined based on all of the desired aspects^
+  setPos(desiredPosition); //runs function to set position
+delay(400); //delay so that constant feedback does not result in highly inconsistent motion
+}
